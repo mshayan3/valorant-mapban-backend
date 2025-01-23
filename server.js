@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -6,6 +5,14 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+
+// Serve static files (if you have a frontend)
+app.use(express.static('public'));
+
+// Root route
+app.get('/', (req, res) => {
+  res.send('Welcome to the Valorant Map Ban Server!');
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -72,34 +79,49 @@ io.on('connection', (socket) => {
   });
 
   // Handle map ban
-  socket.on('ban-map', (sessionId, mapId) => {
+  socket.on('ban-map', (sessionId, mapId, callback) => {
     const session = sessions[sessionId];
-    if (!session) return;
+    if (!session) {
+      callback({ error: 'Session not found' });
+      return;
+    }
     const map = session.maps.find((m) => m.id === mapId);
     if (map && !map.banned) {
       map.banned = true;
       session.bans.push(mapId);
       session.currentTurn = session.currentTurn === 'TeamA' ? 'TeamB' : 'TeamA';
-      io.to(sessionId).emit('session-update', session); // Broadcast updated session data
+      io.to(sessionId).emit('session-update', session);
+      callback({ success: true });
+    } else {
+      callback({ error: 'Map not found or already banned' });
     }
   });
 
   // Handle map selection
-  socket.on('select-map', (sessionId, mapId) => {
+  socket.on('select-map', (sessionId, mapId, callback) => {
     const session = sessions[sessionId];
-    if (!session) return;
+    if (!session) {
+      callback({ error: 'Session not found' });
+      return;
+    }
     const map = session.maps.find((m) => m.id === mapId);
     if (map && !map.banned && !session.selectedMaps.includes(mapId)) {
       session.selectedMaps.push(mapId);
       session.currentTurn = session.currentTurn === 'TeamA' ? 'TeamB' : 'TeamA';
-      io.to(sessionId).emit('session-update', session); // Broadcast updated session data
+      io.to(sessionId).emit('session-update', session);
+      callback({ success: true });
+    } else {
+      callback({ error: 'Map not found, already banned, or already selected' });
     }
   });
 
   // Handle side selection
-  socket.on('select-side', (sessionId, team, side) => {
+  socket.on('select-side', (sessionId, team, side, callback) => {
     const session = sessions[sessionId];
-    if (!session) return;
+    if (!session) {
+      callback({ error: 'Session not found' });
+      return;
+    }
     if (team === 'TeamA') {
       session.teamA.side = side;
       session.teamB.side = side === 'Attackers' ? 'Defenders' : 'Attackers';
@@ -107,12 +129,22 @@ io.on('connection', (socket) => {
       session.teamB.side = side;
       session.teamA.side = side === 'Attackers' ? 'Defenders' : 'Attackers';
     }
-    io.to(sessionId).emit('session-update', session); // Broadcast updated session data
+    io.to(sessionId).emit('session-update', session);
+    callback({ success: true });
   });
 
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('A user disconnected:', socket.id);
+
+    // Clean up sessions if no users are left in the room
+    Object.keys(sessions).forEach((sessionId) => {
+      const room = io.sockets.adapter.rooms.get(sessionId);
+      if (!room || room.size === 0) {
+        delete sessions[sessionId];
+        console.log(`Session deleted: ${sessionId}`);
+      }
+    });
   });
 });
 
